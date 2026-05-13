@@ -174,6 +174,7 @@ generate_openclaw_json() {
 
     python3 << PYEOF
 import json
+import os
 
 main_token = """$main_token"""
 user_id = """$user_id"""
@@ -182,7 +183,6 @@ bot_configs = """$bot_configs"""
 
 bots = []
 for bot in bot_configs.split(','):
-    # 只在第一个冒号处分割，因为 Token 里可能包含冒号
     idx = bot.find(':')
     if idx > 0:
         name = bot[:idx].strip()
@@ -192,81 +192,114 @@ for bot in bot_configs.split(','):
         bot_id = bot_id.strip('-')
         bots.append({'name': name, 'token': token, 'id': bot_id})
 
-config = {
-    "agents": {
-        "defaults": {
-            "workspace": "$HOME/.openclaw/workspace",
-            "thinkingDefault": "adaptive"
-        },
-        "list": [
-            {
-                "id": "main",
-                "workspace": "$HOME/.openclaw/workspace-main",
-                "agentDir": "$HOME/.openclaw/agents/main/agent",
-                "subagents": {"allowAgents": [b['id'] for b in bots]}
-            }
-        ]
-    },
-    "bindings": [
-        {"agentId": "main", "match": {"channel": "telegram", "accountId": "default"}}
-    ],
-    "tools": {
-        "sessions": {"visibility": "all"},
-        "agentToAgent": {"enabled": True, "allow": ["main"] + [b['id'] for b in bots]}
-    },
-    "session": {"dmScope": "main"},
-    "gateway": {
-        "mode": "local",
-        "port": 11403,
-        "bind": "loopback",
-        "reload": {"mode": "restart"}
-    },
-    "channels": {
-        "telegram": {
-            "enabled": True,
-            "dmPolicy": "pairing",
-            "groupAllowFrom": [user_id],
-            "streamMode": "partial",
-            "accounts": {
-                "default": {
-                    "botToken": main_token,
-                    "dmPolicy": "pairing",
-                    "groupPolicy": "allowlist",
-                    "groupAllowFrom": [user_id],
-                    "groups": {group_id: {"requireMention": True, "allowFrom": [user_id]}},
-                    "allowFrom": [user_id],
-                    "streamMode": "partial"
-                }
-            }
+# 加载现有配置（如果有）
+config_path = os.path.expanduser('$OPENCLAW_CONFIG')
+if os.path.exists(config_path):
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+else:
+    config = {}
+
+# 更新 agents
+if 'agents' not in config:
+    config['agents'] = {}
+if 'defaults' not in config['agents']:
+    config['agents']['defaults'] = {}
+config['agents']['defaults']['thinkingDefault'] = 'adaptive'
+if 'workspace' not in config['agents']['defaults']:
+    config['agents']['defaults']['workspace'] = os.path.expanduser('$HOME/.openclaw/workspace')
+
+if 'list' not in config['agents']:
+    config['agents']['list'] = []
+
+# 找到或创建 main agent
+main_agent = None
+for a in config['agents']['list']:
+    if a.get('id') == 'main':
+        main_agent = a
+        break
+if main_agent is None:
+    main_agent = {'id': 'main'}
+    config['agents']['list'].append(main_agent)
+
+main_agent['workspace'] = os.path.expanduser('$HOME/.openclaw/workspace-main')
+main_agent['agentDir'] = os.path.expanduser('$HOME/.openclaw/agents/main/agent')
+main_agent['subagents'] = {'allowAgents': [b['id'] for b in bots]}
+
+# 添加子 bots 到 agents.list
+existing_ids = [a.get('id') for a in config['agents']['list']]
+for bot in bots:
+    if bot['id'] not in existing_ids:
+        config['agents']['list'].append({
+            'id': bot['id'],
+            'workspace': os.path.expanduser(f"$HOME/.openclaw/workspace-{bot['id']}"),
+            'agentDir': os.path.expanduser(f"$HOME/.openclaw/agents/{bot['id']}/agent")
+        })
+
+# 更新 bindings
+if 'bindings' not in config:
+    config['bindings'] = []
+# 移除旧的 telegram bindings
+config['bindings'] = [b for b in config['bindings'] if b.get('match', {}).get('channel') != 'telegram']
+# 添加新的 telegram bindings
+config['bindings'].append({'agentId': 'main', 'match': {'channel': 'telegram', 'accountId': 'default'}})
+for bot in bots:
+    config['bindings'].append({'agentId': bot['id'], 'match': {'channel': 'telegram', 'accountId': bot['id']}})
+
+# 更新 tools
+if 'tools' not in config:
+    config['tools'] = {}
+config['tools']['sessions'] = {'visibility': 'all'}
+config['tools']['agentToAgent'] = {'enabled': True, 'allow': ['main'] + [b['id'] for b in bots]}
+
+# 更新 session
+config['session'] = {'dmScope': 'main'}
+
+# 更新或创建 gateway
+if 'gateway' not in config:
+    config['gateway'] = {
+        'mode': 'local',
+        'port': 11403,
+        'bind': 'loopback',
+        'reload': {'mode': 'restart'}
+    }
+
+# 更新 channels.telegram
+if 'channels' not in config:
+    config['channels'] = {}
+config['channels']['telegram'] = {
+    'enabled': True,
+    'dmPolicy': 'pairing',
+    'groupAllowFrom': [user_id],
+    'streamMode': 'partial',
+    'accounts': {
+        'default': {
+            'botToken': main_token,
+            'dmPolicy': 'pairing',
+            'groupPolicy': 'allowlist',
+            'groupAllowFrom': [user_id],
+            'groups': {group_id: {'requireMention': True, 'allowFrom': [user_id]}},
+            'allowFrom': [user_id],
+            'streamMode': 'partial'
         }
     }
 }
-
 for bot in bots:
-    config["agents"]["list"].append({
-        "id": bot['id'],
-        "workspace": f"$HOME/.openclaw/workspace-{bot['id']}",
-        "agentDir": f"$HOME/.openclaw/agents/{bot['id']}/agent"
-    })
-    config["bindings"].append({
-        "agentId": bot['id'],
-        "match": {"channel": "telegram", "accountId": bot['id']}
-    })
-    config["channels"]["telegram"]["accounts"][bot['id']] = {
-        "botToken": bot['token'],
-        "enabled": True,
-        "commands": {"native": False, "nativeSkills": False},
-        "dmPolicy": "allowlist",
-        "allowFrom": [user_id],
-        "groupPolicy": "allowlist",
-        "groupAllowFrom": [user_id],
-        "groups": {group_id: {"requireMention": True}},
-        "streamMode": "partial"
+    config['channels']['telegram']['accounts'][bot['id']] = {
+        'botToken': bot['token'],
+        'enabled': True,
+        'commands': {'native': False, 'nativeSkills': False},
+        'dmPolicy': 'allowlist',
+        'allowFrom': [user_id],
+        'groupPolicy': 'allowlist',
+        'groupAllowFrom': [user_id],
+        'groups': {group_id: {'requireMention': True}},
+        'streamMode': 'partial'
     }
 
-with open('$OPENCLAW_CONFIG', 'w', encoding='utf-8') as f:
+with open(config_path, 'w', encoding='utf-8') as f:
     json.dump(config, f, indent=2, ensure_ascii=False)
-print("JSON生成成功")
+print("配置生成成功")
 PYEOF
 
     success "生成 openclaw.json 配置"
