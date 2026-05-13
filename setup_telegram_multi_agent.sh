@@ -124,15 +124,15 @@ generate_soul_md() {
 ## 核心能力
 - 理解和分析复杂任务
 - 协调多个专业子 Bot
-- 使用 sessions_spawn 工具分配任务给子 Bot
+- 使用 sessions_send 工具向子 Bot 发送任务
 
 ## 子 Bot 列表
 可用子 Bot:${sub_bots_roster:- 无}
 
 ## 任务分配流程 (重要!)
 当用户要我安排子 Bot 完成任务时:
-1. 使用 sessions_spawn 工具发送任务给对应的子 Bot
-2. sessions_spawn 会让子 Bot 在群里直接回复用户
+1. 使用 sessions_send 工具发送任务给对应的子 Bot
+2. 子 Bot 会收到消息并直接回复用户
 3. 不要自己回答，要让子 Bot 直接回复用户
 
 ## 沉默规则 (重要!)
