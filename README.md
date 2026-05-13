@@ -26,8 +26,9 @@ chmod +x setup_telegram_multi_agent.sh
   --main-token "主bot:token" \
   --user-id "123456" \
   --group-id "-1001234567890" \
-  --bot "coder:子bot1:token" \
-  --bot "writer:子bot2:token"
+  --main-username "@主bot名" \
+  --bot "coder:子bot1token:@coder_bot" \
+  --bot "writer:子bot2token:@writer_bot"
 ```
 
 ## 配置说明
