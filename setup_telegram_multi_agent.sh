@@ -175,6 +175,8 @@ generate_openclaw_json() {
     python3 << PYEOF
 import json
 import os
+import shutil
+from datetime import datetime
 
 main_token = """$main_token"""
 user_id = """$user_id"""
@@ -192,13 +194,42 @@ for bot in bot_configs.split(','):
         bot_id = bot_id.strip('-')
         bots.append({'name': name, 'token': token, 'id': bot_id})
 
-# 加载现有配置（如果有）
+# 加载现有配置
 config_path = os.path.expanduser('$OPENCLAW_CONFIG')
 if os.path.exists(config_path):
+    # 备份
+    backup_path = config_path + f".backup-multiagent-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    shutil.copy(config_path, backup_path)
+    print(f"已备份配置到: {backup_path}")
     with open(config_path, 'r') as f:
         config = json.load(f)
 else:
     config = {}
+
+# ========== 清理旧的 telegram 相关配置 ==========
+
+# 1. 清理 agents.list - 只保留 main，其他 telegram agents 全删
+if 'agents' in config and 'list' in config['agents']:
+    # 收集所有 telegram 相关的 agent id（除了 main）
+    telegram_agent_ids = set()
+    for bot in bots:
+        telegram_agent_ids.add(bot['id'])
+    # 只保留 id == 'main' 的 agent
+    config['agents']['list'] = [a for a in config['agents']['list'] if a.get('id') == 'main']
+    print(f"已清理旧的 telegram agents")
+
+# 2. 清理 bindings - 移除所有 telegram channel 的 binding
+if 'bindings' in config:
+    config['bindings'] = [b for b in config['bindings'] if b.get('match', {}).get('channel') != 'telegram']
+    print("已清理旧的 telegram bindings")
+
+# 3. 清理 channels.telegram - 完全替换
+if 'channels' in config and 'telegram' in config['channels']:
+    # 保留其他 channel
+    other_channels = {k: v for k, v in config['channels'].items() if k != 'telegram'}
+    config['channels'] = other_channels
+
+# ========== 添加新的配置 ==========
 
 # 更新 agents
 if 'agents' not in config:
@@ -209,10 +240,7 @@ config['agents']['defaults']['thinkingDefault'] = 'adaptive'
 if 'workspace' not in config['agents']['defaults']:
     config['agents']['defaults']['workspace'] = os.path.expanduser('$HOME/.openclaw/workspace')
 
-if 'list' not in config['agents']:
-    config['agents']['list'] = []
-
-# 找到或创建 main agent
+# 确保 main agent 存在
 main_agent = None
 for a in config['agents']['list']:
     if a.get('id') == 'main':
@@ -227,35 +255,28 @@ main_agent['agentDir'] = os.path.expanduser('$HOME/.openclaw/agents/main/agent')
 main_agent['subagents'] = {'allowAgents': [b['id'] for b in bots]}
 
 # 添加子 bots 到 agents.list
-existing_ids = [a.get('id') for a in config['agents']['list']]
 for bot in bots:
-    if bot['id'] not in existing_ids:
-        config['agents']['list'].append({
-            'id': bot['id'],
-            'workspace': os.path.expanduser(f"$HOME/.openclaw/workspace-{bot['id']}"),
-            'agentDir': os.path.expanduser(f"$HOME/.openclaw/agents/{bot['id']}/agent")
-        })
+    config['agents']['list'].append({
+        'id': bot['id'],
+        'workspace': os.path.expanduser(f"$HOME/.openclaw/workspace-{bot['id']}"),
+        'agentDir': os.path.expanduser(f"$HOME/.openclaw/agents/{bot['id']}/agent")
+    })
 
-# 更新 bindings
-if 'bindings' not in config:
-    config['bindings'] = []
-# 移除旧的 telegram bindings
-config['bindings'] = [b for b in config['bindings'] if b.get('match', {}).get('channel') != 'telegram']
-# 添加新的 telegram bindings
+# 添加 bindings
+config['bindings'] = config.get('bindings', [])
 config['bindings'].append({'agentId': 'main', 'match': {'channel': 'telegram', 'accountId': 'default'}})
 for bot in bots:
     config['bindings'].append({'agentId': bot['id'], 'match': {'channel': 'telegram', 'accountId': bot['id']}})
 
 # 更新 tools
-if 'tools' not in config:
-    config['tools'] = {}
+config['tools'] = config.get('tools', {})
 config['tools']['sessions'] = {'visibility': 'all'}
 config['tools']['agentToAgent'] = {'enabled': True, 'allow': ['main'] + [b['id'] for b in bots]}
 
 # 更新 session
 config['session'] = {'dmScope': 'main'}
 
-# 更新或创建 gateway
+# 添加或更新 gateway
 if 'gateway' not in config:
     config['gateway'] = {
         'mode': 'local',
@@ -264,9 +285,8 @@ if 'gateway' not in config:
         'reload': {'mode': 'restart'}
     }
 
-# 更新 channels.telegram
-if 'channels' not in config:
-    config['channels'] = {}
+# 添加 channels.telegram
+config['channels'] = config.get('channels', {})
 config['channels']['telegram'] = {
     'enabled': True,
     'dmPolicy': 'pairing',
@@ -284,6 +304,7 @@ config['channels']['telegram'] = {
         }
     }
 }
+
 for bot in bots:
     config['channels']['telegram']['accounts'][bot['id']] = {
         'botToken': bot['token'],
