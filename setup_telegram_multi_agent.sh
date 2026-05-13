@@ -103,13 +103,15 @@ generate_soul_md() {
     local is_main="$2"
     local sub_bots="$3"
     local username="$4"
+    local sub_bots_roster="$5"
     local workspace="$HOME/.openclaw/workspace-$agent_id"
 
     if [ "$is_main" = "true" ]; then
         local silent_rules=""
         if [ -n "$sub_bots" ]; then
             for sb in $sub_bots; do
-                silent_rules="$silent_rules\n- 当 @$sb 被 @mention 时, 不要回复, 保持沉默"
+                silent_rules="${silent_rules}
+- 当 ${sb} 被 @mention 时, 不要回复, 保持沉默"
             done
         fi
 
@@ -124,6 +126,14 @@ generate_soul_md() {
 - 协调多个专业子 Bot
 - 通过 @mention 召唤子 Bot 来处理特定任务
 - 当子 Bot 完成任务后,可以整合结果或进一步处理
+
+## 子 Bot 列表
+可用子 Bot:${sub_bots_roster:- 无}
+
+## 触发子 Bot 方式
+- @mention 子 Bot 用户名 (如 @cehua_bot)
+- 直接说子 Bot 名称 (如 "cehua", "xiezuo")
+- 两者效果相同，都可以召唤对应子 Bot
 
 ## 行为规则
 - 私聊: 随时响应用户
@@ -146,12 +156,13 @@ EOF
 # SOUL.md - 我是谁与如何行为
 
 ## 身份
-我是 $username, 专业 $purpose 助手。
+我是 $username, 专业 $name 助手。
 
 ## 核心能力
-- $purpose 相关任务
+- $name 相关任务
 - 只在被 @mention 时响应群聊消息
 - 私聊随时响应
+- 被召唤时直接回复结果给用户
 
 ## 行为规则
 - 群聊: 仅在被 @mention 时响应
@@ -391,11 +402,7 @@ generate_config() {
     local bot_configs="$4"
     local main_username="$5"
 
-    create_workspace_dirs "main"
-    generate_identity_md "main" "主助手" "$main_username" "协调管理"
-    generate_soul_md "main" "true" "" "$main_username"
-
-    # 让 Python 解析所有 bot 配置，Bash 只负责创建文件
+    # 让 Python 先解析所有 bot 配置
     if [ -n "$bot_configs" ]; then
         python3 << PYEOF
 import json
@@ -422,9 +429,38 @@ for bot in """$bot_configs""".split(','):
 PYEOF
     fi > /tmp/bot_parse_output.txt
 
+    # 构建子Agent信息（用于主Agent的SOUL.md）
     local sub_bots_list=""
+    local sub_bots_roster=""
     local created_workspaces=""
-    if [ -n "$bot_configs" ]; then
+    if [ -n "$bot_configs" ] && [ -s /tmp/bot_parse_output.txt ]; then
+        while IFS='|' read -r bot_id name username token; do
+            [ -z "$bot_id" ] && continue
+            # 子Agent列表（用于沉默规则）
+            if [ -n "$sub_bots_list" ]; then
+                sub_bots_list="$sub_bots_list $username"
+            else
+                sub_bots_list="$username"
+            fi
+            # 子Agent详细信息（名称+用户名）
+            local bot_entry="
+- **$name** (@${username#@})"
+            if [ -n "$sub_bots_roster" ]; then
+                sub_bots_roster="${sub_bots_roster}${bot_entry}"
+            else
+                sub_bots_roster="${bot_entry}"
+            fi
+            created_workspaces="$created_workspaces $bot_id"
+        done < /tmp/bot_parse_output.txt
+    fi
+
+    # 创建主Agent工作区（此时子Bot列表已构建完成）
+    create_workspace_dirs "main"
+    generate_identity_md "main" "主助手" "$main_username" "协调管理"
+    generate_soul_md "main" "true" "$sub_bots_list" "$main_username" "$sub_bots_roster"
+
+    # 创建子Agent工作区
+    if [ -n "$bot_configs" ] && [ -s /tmp/bot_parse_output.txt ]; then
         while IFS='|' read -r bot_id name username token; do
             [ -z "$bot_id" ] && continue
             local nickname="${name^}"
@@ -432,13 +468,6 @@ PYEOF
             create_workspace_dirs "$bot_id"
             generate_identity_md "$bot_id" "$nickname" "$username" "$name"
             generate_soul_md "$bot_id" "false" "" "$username"
-
-            if [ -n "$sub_bots_list" ]; then
-                sub_bots_list="$sub_bots_list "
-            fi
-            sub_bots_list="$sub_bots_list$username"
-
-            created_workspaces="$created_workspaces $bot_id"
         done < /tmp/bot_parse_output.txt
         rm -f /tmp/bot_parse_output.txt
     fi
