@@ -215,6 +215,12 @@ config = {
         "agentToAgent": {"enabled": True, "allow": ["main"] + [b['id'] for b in bots]}
     },
     "session": {"dmScope": "main"},
+    "gateway": {
+        "mode": "local",
+        "port": 11403,
+        "bind": "loopback",
+        "reload": {"mode": "restart"}
+    },
     "channels": {
         "telegram": {
             "enabled": True,
