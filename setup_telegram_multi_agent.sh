@@ -182,10 +182,11 @@ bot_configs = """$bot_configs"""
 
 bots = []
 for bot in bot_configs.split(','):
-    parts = bot.strip().split(':')
-    if len(parts) >= 2:
-        name = parts[0].strip()
-        token = parts[1].strip()
+    # 只在第一个冒号处分割，因为 Token 里可能包含冒号
+    idx = bot.find(':')
+    if idx > 0:
+        name = bot[:idx].strip()
+        token = bot[idx+1:].strip()
         bot_id = name.lower().replace(' ', '-')
         bot_id = ''.join(c if c.isalnum() or c == '-' else '-' for c in bot_id)
         bot_id = bot_id.strip('-')
