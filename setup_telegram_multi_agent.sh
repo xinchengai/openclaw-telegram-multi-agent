@@ -189,11 +189,11 @@ for bot in bot_configs.split(','):
     if idx > 0:
         name = bot[:idx].strip()
         rest = bot[idx+1:].strip()
-        # 找第二个冒号
-        idx2 = rest.find(':')
-        if idx2 > 0:
-            token = rest[:idx2].strip()
-            username = rest[idx2+1:].strip()
+        # 用最后一个冒号分割 token 和 username
+        last_colon = rest.rfind(':')
+        if last_colon > 0:
+            token = rest[:last_colon].strip()
+            username = rest[last_colon+1:].strip()
         else:
             token = rest
             username = f"@{name}_bot"
