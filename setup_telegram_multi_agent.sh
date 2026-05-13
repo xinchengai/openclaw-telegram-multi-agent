@@ -395,15 +395,38 @@ generate_config() {
     generate_identity_md "main" "主助手" "$main_username" "协调管理"
     generate_soul_md "main" "true" "" "$main_username"
 
-    local sub_bots_list=""
+    # 让 Python 解析所有 bot 配置，Bash 只负责创建文件
     if [ -n "$bot_configs" ]; then
-        IFS=',' read -ra BOTArr <<< "$bot_configs"
-        for bot in "${BOTArr[@]}"; do
-            IFS=':' read -ra parts <<< "$bot"
-            local name="${parts[0]}"
-            local token="${parts[1]}"
-            local username="${parts[2]:-@${name}_bot}"
-            local bot_id=$(generate_id "$name")
+        python3 << PYEOF
+import json
+
+bots = []
+for bot in """$bot_configs""".split(','):
+    idx = bot.find(':')
+    if idx > 0:
+        name = bot[:idx].strip()
+        rest = bot[idx+1:].strip()
+        # 用最后一个冒号分割 token 和 username
+        last_colon = rest.rfind(':')
+        if last_colon > 0:
+            token = rest[:last_colon].strip()
+            username = rest[last_colon+1:].strip()
+        else:
+            token = rest
+            username = f"@{name}_bot"
+        bot_id = name.lower().replace(' ', '-')
+        bot_id = ''.join(c if c.isalnum() or c == '-' else '-' for c in bot_id)
+        bot_id = bot_id.strip('-')
+        # 输出: bot_id|name|username|token
+        print(f"{bot_id}|{name}|{username}|{token}")
+PYEOF
+    fi > /tmp/bot_parse_output.txt
+
+    local sub_bots_list=""
+    local created_workspaces=""
+    if [ -n "$bot_configs" ]; then
+        while IFS='|' read -r bot_id name username token; do
+            [ -z "$bot_id" ] && continue
             local nickname="${name^}"
 
             create_workspace_dirs "$bot_id"
@@ -414,7 +437,10 @@ generate_config() {
                 sub_bots_list="$sub_bots_list "
             fi
             sub_bots_list="$sub_bots_list$username"
-        done
+
+            created_workspaces="$created_workspaces $bot_id"
+        done < /tmp/bot_parse_output.txt
+        rm -f /tmp/bot_parse_output.txt
     fi
 
     generate_openclaw_json "$main_token" "$user_id" "$group_id" "$bot_configs"
@@ -427,15 +453,9 @@ generate_config() {
     echo ""
     echo "工作区:"
     echo "  - ~/.openclaw/workspace-main/"
-    if [ -n "$bot_configs" ]; then
-        IFS=',' read -ra BOTArr <<< "$bot_configs"
-        for bot in "${BOTArr[@]}"; do
-            IFS=':' read -ra parts <<< "$bot"
-            local name="${parts[0]}"
-            local bot_id=$(generate_id "$name")
-            echo "  - ~/.openclaw/workspace-$bot_id/"
-        done
-    fi
+    for wid in $created_workspaces; do
+        echo "  - ~/.openclaw/workspace-$wid/"
+    done
     echo ""
     echo "配置文件:"
     echo "  - $OPENCLAW_CONFIG"
