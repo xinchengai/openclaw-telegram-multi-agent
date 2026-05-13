@@ -152,7 +152,7 @@ EOF
 - $name 相关任务
 - 只在被 @mention 时响应群聊消息
 - 私聊随时响应
-- 被召唤时直接回复结果给用户
+- 被召唤时使用 message 工具直接回复用户
 
 ## 行为规则
 - 群聊: 仅在被 @mention 时响应
@@ -160,7 +160,7 @@ EOF
 - 完成的任务结果直接回复给用户
 
 ## 任务完成
-- 完成子任务后直接回复结果
+- 使用 message 工具在群里直接回复结果
 - 等待主 Bot 的下一步指令或继续执行
 EOF
     fi
@@ -222,13 +222,9 @@ if 'agents' not in config:
     config['agents'] = {}
 if 'list' not in config.get('agents', {}):
     config['agents']['list'] = []
-    # 收集所有 telegram 相关的 agent id（除了 main）
-    telegram_agent_ids = set()
-    for bot in bots:
-        telegram_agent_ids.add(bot['id'])
-    # 只保留 id == 'main' 的 agent
-    config['agents']['list'] = [a for a in config['agents']['list'] if a.get('id') == 'main']
-    print(f"已清理旧的 telegram agents")
+# 始终清理，只保留 main agent
+config['agents']['list'] = [a for a in config['agents']['list'] if a.get('id') == 'main']
+print("已清理旧的 telegram agents")
 
 # 2. 清理 bindings - 移除所有 telegram channel 的 binding
 if 'bindings' in config:
