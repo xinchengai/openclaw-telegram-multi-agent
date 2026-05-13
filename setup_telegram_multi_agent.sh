@@ -196,7 +196,6 @@ config = {
     "agents": {
         "defaults": {
             "workspace": "$HOME/.openclaw/workspace",
-            "model": {"primary": "custom-irouter-io/MiniMax-M2.7"},
             "thinkingDefault": "adaptive"
         },
         "list": [
