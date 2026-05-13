@@ -176,6 +176,7 @@ generate_openclaw_json() {
     local bot_configs="$4"
 
     local sub_agents_json=""
+    local allow_agents_json=""
     local bindings_json=""
     local accounts_json=""
     local first_bot=true
@@ -187,6 +188,13 @@ generate_openclaw_json() {
         local name="${parts[0]}"
         local token="${parts[1]}"
         local bot_id=$(generate_id "$name")
+
+        # allowAgents (只需要 ID)
+        if [ -n "$allow_agents_json" ]; then
+            allow_agents_json="$allow_agents_json, \"$bot_id\""
+        else
+            allow_agents_json="\"$bot_id\""
+        fi
 
         # agents.list
         if [ -n "$sub_agents_json" ]; then
@@ -313,6 +321,7 @@ JSONEOF
         fi
         allow_list="$allow_list\"$bot_id\""
     done
+    sed -i "s/%ALLOW_AGENTS%/$allow_agents_json/g" "$OPENCLAW_CONFIG"
     sed -i "s/ALLOW_PLACEHOLDER/, $allow_list/" "$OPENCLAW_CONFIG"
 
     success "生成 openclaw.json 配置"
