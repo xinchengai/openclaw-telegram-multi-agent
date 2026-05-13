@@ -209,7 +209,10 @@ else:
 # ========== 清理旧的 telegram 相关配置 ==========
 
 # 1. 清理 agents.list - 只保留 main，其他 telegram agents 全删
-if 'agents' in config and 'list' in config['agents']:
+if 'agents' not in config:
+    config['agents'] = {}
+if 'list' not in config.get('agents', {}):
+    config['agents']['list'] = []
     # 收集所有 telegram 相关的 agent id（除了 main）
     telegram_agent_ids = set()
     for bot in bots:
