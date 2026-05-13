@@ -188,11 +188,19 @@ for bot in bot_configs.split(','):
     idx = bot.find(':')
     if idx > 0:
         name = bot[:idx].strip()
-        token = bot[idx+1:].strip()
+        rest = bot[idx+1:].strip()
+        # 找第二个冒号
+        idx2 = rest.find(':')
+        if idx2 > 0:
+            token = rest[:idx2].strip()
+            username = rest[idx2+1:].strip()
+        else:
+            token = rest
+            username = f"@{name}_bot"
         bot_id = name.lower().replace(' ', '-')
         bot_id = ''.join(c if c.isalnum() or c == '-' else '-' for c in bot_id)
         bot_id = bot_id.strip('-')
-        bots.append({'name': name, 'token': token, 'id': bot_id})
+        bots.append({'name': name, 'token': token, 'id': bot_id, 'username': username})
 
 # 加载现有配置
 config_path = os.path.expanduser('$OPENCLAW_CONFIG')
@@ -341,13 +349,15 @@ interactive_mode() {
 
     echo ""
     echo "--- 子 Bot 配置 ---"
-    echo "格式: 名称:Token (如 coder:abc123:xyz)"
+    echo "格式: 名称:Token:Username (如 coder:abc123:@coder_bot)"
+    echo "Username 是 @BotFather 给你的 bot @用户名(包含@)"
     echo "输入空行结束子 Bot 配置"
     echo ""
 
+    read -p "主 Bot @Username (如 @xxx_bot): " main_username
     local bot_configs=""
     while true; do
-        read -p "子 Bot (名称:Token): " input
+        read -p "子 Bot (名称:Token:Username): " input
         if [ -z "$input" ]; then
             break
         fi
@@ -366,11 +376,12 @@ interactive_mode() {
     echo ""
     info "收集到的配置:"
     echo "  主 Bot Token: ${main_token:0:20}..."
+    echo "  主 Bot @Username: $main_username"
     echo "  User ID: $user_id"
     echo "  群组 ID: $group_id"
     echo "  子 Bots: $bot_configs"
 
-    generate_config "$main_token" "$user_id" "$group_id" "$bot_configs"
+    generate_config "$main_token" "$user_id" "$group_id" "$bot_configs" "$main_username"
 }
 
 generate_config() {
@@ -378,10 +389,11 @@ generate_config() {
     local user_id="$2"
     local group_id="$3"
     local bot_configs="$4"
+    local main_username="$5"
 
     create_workspace_dirs "main"
-    generate_identity_md "main" "主助手" "@main_bot" "协调管理"
-    generate_soul_md "main" "true" "" "@main_bot"
+    generate_identity_md "main" "主助手" "$main_username" "协调管理"
+    generate_soul_md "main" "true" "" "$main_username"
 
     local sub_bots_list=""
     if [ -n "$bot_configs" ]; then
@@ -390,9 +402,9 @@ generate_config() {
             IFS=':' read -ra parts <<< "$bot"
             local name="${parts[0]}"
             local token="${parts[1]}"
+            local username="${parts[2]:-@${name}_bot}"
             local bot_id=$(generate_id "$name")
             local nickname="${name^}"
-            local username="@${name}_bot"
 
             create_workspace_dirs "$bot_id"
             generate_identity_md "$bot_id" "$nickname" "$username" "$name"
@@ -447,6 +459,7 @@ main() {
     local user_id=""
     local group_id=""
     local bot_configs=""
+    local main_username=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -461,15 +474,16 @@ main() {
                     bot_configs="$bot_configs,$2"
                 fi
                 shift 2 ;;
+            --main-username) main_username="$2"; shift 2 ;;
             *) error "未知参数: $1"; usage ;;
         esac
     done
 
-    if [ -z "$main_token" ] || [ -z "$user_id" ] || [ -z "$group_id" ]; then
+    if [ -z "$main_token" ] || [ -z "$user_id" ] || [ -z "$group_id" ] || [ -z "$main_username" ]; then
         if [ -t 0 ]; then
             interactive_mode
         else
-            error "缺少必需参数: --main-token, --user-id, --group-id"
+            error "缺少必需参数: --main-token, --user-id, --group-id, --main-username"
             echo ""
             usage
         fi
@@ -478,7 +492,7 @@ main() {
 
     check_openclaw
     backup_config
-    generate_config "$main_token" "$user_id" "$group_id" "$bot_configs"
+    generate_config "$main_token" "$user_id" "$group_id" "$bot_configs" "$main_username"
 }
 
 main "$@"
