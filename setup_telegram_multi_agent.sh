@@ -292,13 +292,13 @@ config['channels']['telegram'] = {
     'dmPolicy': 'pairing',
     'groupAllowFrom': [user_id],
     'streamMode': 'partial',
+    'groups': {group_id: {'requireMention': True, 'allowFrom': [user_id]}},
     'accounts': {
         'default': {
             'botToken': main_token,
             'dmPolicy': 'pairing',
             'groupPolicy': 'allowlist',
             'groupAllowFrom': [user_id],
-            'groups': {group_id: {'requireMention': True, 'allowFrom': [user_id]}},
             'allowFrom': [user_id],
             'streamMode': 'partial'
         }
@@ -314,7 +314,6 @@ for bot in bots:
         'allowFrom': [user_id],
         'groupPolicy': 'allowlist',
         'groupAllowFrom': [user_id],
-        'groups': {group_id: {'requireMention': True}},
         'streamMode': 'partial'
     }
 
