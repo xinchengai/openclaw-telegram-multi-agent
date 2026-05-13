@@ -5,7 +5,7 @@
 
 set -e
 
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.0.1"
 OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 BACKUP_CONFIG="$HOME/.openclaw/openclaw.json.backup-$(date +%Y%m%d_%H%M%S)"
 
@@ -14,7 +14,6 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-CYAN='\033[0;36m'
 NC='\033[0m'
 
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -175,154 +174,128 @@ generate_openclaw_json() {
     local group_id="$3"
     local bot_configs="$4"
 
-    local sub_agents_json=""
-    local allow_agents_json=""
-    local bindings_json=""
-    local accounts_json=""
-    local first_bot=true
+    # 使用 Python 生成正确的 JSON
+    python3 << PYEOF
+import json
+import sys
 
-    # 处理子 Bot
-    IFS=',' read -ra BOTArr <<< "$bot_configs"
-    for bot in "${BOTArr[@]}"; do
-        IFS=':' read -ra parts <<< "$bot"
-        local name="${parts[0]}"
-        local token="${parts[1]}"
-        local bot_id=$(generate_id "$name")
+main_token = """$main_token"""
+user_id = """$user_id"""
+group_id = """$group_id"""
+bot_configs = """$bot_configs"""
 
-        # allowAgents (只需要 ID)
-        if [ -n "$allow_agents_json" ]; then
-            allow_agents_json="$allow_agents_json, \"$bot_id\""
-        else
-            allow_agents_json="\"$bot_id\""
-        fi
+# 解析子 bot 配置
+bots = []
+for bot in bot_configs.split(','):
+    parts = bot.strip().split(':')
+    if len(parts) >= 2:
+        name = parts[0].strip()
+        token = parts[1].strip()
+        bot_id = name.lower().replace(' ', '-')
+        # 移除特殊字符
+        bot_id = ''.join(c if c.isalnum() or c == '-' else '-' for c in bot_id)
+        bot_id = bot_id.strip('-')
+        bots.append({'name': name, 'token': token, 'id': bot_id})
 
-        # agents.list
-        if [ -n "$sub_agents_json" ]; then
-            sub_agents_json="$sub_agents_json,"
-        fi
-        sub_agents_json="$sub_agents_json
-      {
-        \"id\": \"$bot_id\",
-        \"workspace\": \"$HOME/.openclaw/workspace-$bot_id\",
-        \"agentDir\": \"$HOME/.openclaw/agents/$bot_id/agent\"
-      }"
-
-        # bindings
-        if [ -n "$bindings_json" ]; then
-            bindings_json="$bindings_json,"
-        fi
-        bindings_json="$bindings_json
-    {
-      \"agentId\": \"$bot_id\",
-      \"match\": { \"channel\": \"telegram\", \"accountId\": \"$bot_id\" }
-    }"
-
-        # accounts
-        if [ "$first_bot" = "true" ]; then
-            first_bot=false
-        else
-            accounts_json="$accounts_json,"
-        fi
-        accounts_json="$accounts_json
-        \"$bot_id\": {
-          \"botToken\": \"$token\",
-          \"enabled\": true,
-          \"commands\": { \"native\": false, \"nativeSkills\": false },
-          \"dmPolicy\": \"allowlist\",
-          \"allowFrom\": [\"$user_id\"],
-          \"groupPolicy\": \"allowlist\",
-          \"groupAllowFrom\": [\"$user_id\"],
-          \"groups\": {
-            \"$group_id\": {
-              \"requireMention\": true
-            }
-          },
-          \"streamMode\": \"partial\"
-        }"
-    done
-
-    # 生成完整配置
-    cat > "$OPENCLAW_CONFIG" << JSONEOF
-{
-  "agents": {
-    "defaults": {
-      "workspace": "$HOME/.openclaw/workspace",
-      "model": {
-        "primary": "custom-irouter-io/MiniMax-M2.7"
-      },
-      "thinkingDefault": "adaptive"
+# 构建配置
+config = {
+    "agents": {
+        "defaults": {
+            "workspace": "$HOME/.openclaw/workspace",
+            "model": {
+                "primary": "custom-irouter-io/MiniMax-M2.7"
+            },
+            "thinkingDefault": "adaptive"
+        },
+        "list": [
+            {
+                "id": "main",
+                "workspace": "$HOME/.openclaw/workspace-main",
+                "agentDir": "$HOME/.openclaw/agents/main/agent",
+                "subagents": {
+                    "allowAgents": [b['id'] for b in bots]
+                }
+            ]
+        ]
     },
-    "list": [
-      {
-        "id": "main",
-        "workspace": "$HOME/.openclaw/workspace-main",
-        "agentDir": "$HOME/.openclaw/agents/main/agent",
-        "subagents": {
-          "allowAgents": [${sub_agents_json//\"/\\\"}]
+    "bindings": [
+        {
+            "agentId": "main",
+            "match": {"channel": "telegram", "accountId": "default"}
         }
-      }$sub_agents_json
-    ]
-  },
-
-  "bindings": [
-    {
-      "agentId": "main",
-      "match": { "channel": "telegram", "accountId": "default" }
-    }$bindings_json
-  ],
-
-  "tools": {
-    "sessions": { "visibility": "all" },
-    "agentToAgent": {
-      "enabled": true,
-      "allow": ["main"ALLOW_PLACEHOLDER]
-    }
-  },
-
-  "session": {
-    "dmScope": "main"
-  },
-
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "dmPolicy": "pairing",
-      "groupAllowFrom": ["$user_id"],
-      "streamMode": "partial",
-      "accounts": {
-        "default": {
-          "botToken": "$main_token",
-          "dmPolicy": "pairing",
-          "groupPolicy": "allowlist",
-          "groupAllowFrom": ["$user_id"],
-          "groups": {
-            "$group_id": {
-              "requireMention": true,
-              "allowFrom": ["$user_id"]
+    ],
+    "tools": {
+        "sessions": {"visibility": "all"},
+        "agentToAgent": {
+            "enabled": True,
+            "allow": ["main"] + [b['id'] for b in bots]
+        }
+    },
+    "session": {
+        "dmScope": "main"
+    },
+    "channels": {
+        "telegram": {
+            "enabled": True,
+            "dmPolicy": "pairing",
+            "groupAllowFrom": [user_id],
+            "streamMode": "partial",
+            "accounts": {
+                "default": {
+                    "botToken": main_token,
+                    "dmPolicy": "pairing",
+                    "groupPolicy": "allowlist",
+                    "groupAllowFrom": [user_id],
+                    "groups": {
+                        group_id: {
+                            "requireMention": True,
+                            "allowFrom": [user_id]
+                        }
+                    },
+                    "allowFrom": [user_id],
+                    "streamMode": "partial"
+                }
             }
-          },
-          "allowFrom": ["$user_id"],
-          "streamMode": "partial"
-        }$accounts_json
-      }
+        }
     }
-  }
 }
-JSONEOF
 
-    # 修复 allowAgents JSON 格式
-    local allow_list=""
-    for bot in "${BOTArr[@]}"; do
-        IFS=':' read -ra parts <<< "$bot"
-        local name="${parts[0]}"
-        local bot_id=$(generate_id "$name")
-        if [ -n "$allow_list" ]; then
-            allow_list="$allow_list, "
-        fi
-        allow_list="$allow_list\"$bot_id\""
-    done
-    sed -i "s/%ALLOW_AGENTS%/$allow_agents_json/g" "$OPENCLAW_CONFIG"
-    sed -i "s/ALLOW_PLACEHOLDER/, $allow_list/" "$OPENCLAW_CONFIG"
+# 添加子 bots
+for bot in bots:
+    # agents.list
+    config["agents"]["list"].append({
+        "id": bot['id'],
+        "workspace": f"$HOME/.openclaw/workspace-{bot['id']}",
+        "agentDir": f"$HOME/.openclaw/agents/{bot['id']}/agent"
+    })
+    # bindings
+    config["bindings"].append({
+        "agentId": bot['id'],
+        "match": {"channel": "telegram", "accountId": bot['id']}
+    })
+    # accounts
+    config["channels"]["telegram"]["accounts"][bot['id']] = {
+        "botToken": bot['token'],
+        "enabled": True,
+        "commands": {"native": False, "nativeSkills": False},
+        "dmPolicy": "allowlist",
+        "allowFrom": [user_id],
+        "groupPolicy": "allowlist",
+        "groupAllowFrom": [user_id],
+        "groups": {
+            group_id: {
+                "requireMention": True
+            }
+        },
+        "streamMode": "partial"
+    }
+
+# 写入文件
+with open('$OPENCLAW_CONFIG', 'w', encoding='utf-8') as f:
+    json.dump(config, f, indent=2, ensure_ascii=False)
+
+print("JSON生成成功")
+PYEOF
 
     success "生成 openclaw.json 配置"
 }
@@ -359,8 +332,7 @@ interactive_mode() {
     done
 
     if [ -z "$bot_configs" ]; then
-        read -p "至少需要 1 个子 Bot, 按回车继续添加: " dummy
-        continue
+        warn "未添加子 Bot，将只创建主 Bot 配置"
     fi
 
     echo ""
@@ -392,24 +364,26 @@ generate_config() {
 
     # 处理子 Bot
     local sub_bots_list=""
-    IFS=',' read -ra BOTArr <<< "$bot_configs"
-    for bot in "${BOTArr[@]}"; do
-        IFS=':' read -ra parts <<< "$bot"
-        local name="${parts[0]}"
-        local token="${parts[1]}"
-        local bot_id=$(generate_id "$name")
-        local nickname="${name^}"
-        local username="@${name}_bot"
+    if [ -n "$bot_configs" ]; then
+        IFS=',' read -ra BOTArr <<< "$bot_configs"
+        for bot in "${BOTArr[@]}"; do
+            IFS=':' read -ra parts <<< "$bot"
+            local name="${parts[0]}"
+            local token="${parts[1]}"
+            local bot_id=$(generate_id "$name")
+            local nickname="${name^}"
+            local username="@${name}_bot"
 
-        create_workspace_dirs "$bot_id"
-        generate_identity_md "$bot_id" "$nickname" "$username" "$name"
-        generate_soul_md "$bot_id" "false" "" "$username"
+            create_workspace_dirs "$bot_id"
+            generate_identity_md "$bot_id" "$nickname" "$username" "$name"
+            generate_soul_md "$bot_id" "false" "" "$username"
 
-        if [ -n "$sub_bots_list" ]; then
-            sub_bots_list="$sub_bots_list "
-        fi
-        sub_bots_list="$sub_bots_list$username"
-    done
+            if [ -n "$sub_bots_list" ]; then
+                sub_bots_list="$sub_bots_list "
+            fi
+            sub_bots_list="$sub_bots_list$username"
+        done
+    fi
 
     # 生成 openclaw.json
     generate_openclaw_json "$main_token" "$user_id" "$group_id" "$bot_configs"
@@ -422,12 +396,15 @@ generate_config() {
     echo ""
     echo "工作区:"
     echo "  - ~/.openclaw/workspace-main/"
-    for bot in "${BOTArr[@]}"; do
-        IFS=':' read -ra parts <<< "$bot"
-        local name="${parts[0]}"
-        local bot_id=$(generate_id "$name")
-        echo "  - ~/.openclaw/workspace-$bot_id/"
-    done
+    if [ -n "$bot_configs" ]; then
+        IFS=',' read -ra BOTArr <<< "$bot_configs"
+        for bot in "${BOTArr[@]}"; do
+            IFS=':' read -ra parts <<< "$bot"
+            local name="${parts[0]}"
+            local bot_id=$(generate_id "$name")
+            echo "  - ~/.openclaw/workspace-$bot_id/"
+        done
+    fi
     echo ""
     echo "配置文件:"
     echo "  - $OPENCLAW_CONFIG"
@@ -495,12 +472,6 @@ main() {
             usage
         fi
         exit 0
-    fi
-
-    if [ -z "$bot_configs" ]; then
-        error "至少需要配置 1 个子 Bot (--bot)"
-        echo ""
-        usage
     fi
 
     check_openclaw
