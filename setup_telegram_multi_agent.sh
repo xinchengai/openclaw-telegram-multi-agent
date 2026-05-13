@@ -5,7 +5,7 @@
 
 set -e
 
-SCRIPT_VERSION="1.0.1"
+SCRIPT_VERSION="1.0.2"
 OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 BACKUP_CONFIG="$HOME/.openclaw/openclaw.json.backup-$(date +%Y%m%d_%H%M%S)"
 
@@ -106,7 +106,6 @@ generate_soul_md() {
     local workspace="$HOME/.openclaw/workspace-$agent_id"
 
     if [ "$is_main" = "true" ]; then
-        # 主 Bot SOUL.md
         local silent_rules=""
         if [ -n "$sub_bots" ]; then
             for sb in $sub_bots; do
@@ -143,7 +142,6 @@ generate_soul_md() {
 - 除非被明确要求,不要介入子 Bot 的专业领域
 EOF
     else
-        # 子 Bot SOUL.md
         cat > "$workspace/SOUL.md" << EOF
 # SOUL.md - 我是谁与如何行为
 
@@ -174,17 +172,14 @@ generate_openclaw_json() {
     local group_id="$3"
     local bot_configs="$4"
 
-    # 使用 Python 生成正确的 JSON
     python3 << PYEOF
 import json
-import sys
 
 main_token = """$main_token"""
 user_id = """$user_id"""
 group_id = """$group_id"""
 bot_configs = """$bot_configs"""
 
-# 解析子 bot 配置
 bots = []
 for bot in bot_configs.split(','):
     parts = bot.strip().split(':')
@@ -192,19 +187,15 @@ for bot in bot_configs.split(','):
         name = parts[0].strip()
         token = parts[1].strip()
         bot_id = name.lower().replace(' ', '-')
-        # 移除特殊字符
         bot_id = ''.join(c if c.isalnum() or c == '-' else '-' for c in bot_id)
         bot_id = bot_id.strip('-')
         bots.append({'name': name, 'token': token, 'id': bot_id})
 
-# 构建配置
 config = {
     "agents": {
         "defaults": {
             "workspace": "$HOME/.openclaw/workspace",
-            "model": {
-                "primary": "custom-irouter-io/MiniMax-M2.7"
-            },
+            "model": {"primary": "custom-irouter-io/MiniMax-M2.7"},
             "thinkingDefault": "adaptive"
         },
         "list": [
@@ -212,28 +203,18 @@ config = {
                 "id": "main",
                 "workspace": "$HOME/.openclaw/workspace-main",
                 "agentDir": "$HOME/.openclaw/agents/main/agent",
-                "subagents": {
-                    "allowAgents": [b['id'] for b in bots]
-                }
-            ]
+                "subagents": {"allowAgents": [b['id'] for b in bots]}
+            }
         ]
     },
     "bindings": [
-        {
-            "agentId": "main",
-            "match": {"channel": "telegram", "accountId": "default"}
-        }
+        {"agentId": "main", "match": {"channel": "telegram", "accountId": "default"}}
     ],
     "tools": {
         "sessions": {"visibility": "all"},
-        "agentToAgent": {
-            "enabled": True,
-            "allow": ["main"] + [b['id'] for b in bots]
-        }
+        "agentToAgent": {"enabled": True, "allow": ["main"] + [b['id'] for b in bots]}
     },
-    "session": {
-        "dmScope": "main"
-    },
+    "session": {"dmScope": "main"},
     "channels": {
         "telegram": {
             "enabled": True,
@@ -246,12 +227,7 @@ config = {
                     "dmPolicy": "pairing",
                     "groupPolicy": "allowlist",
                     "groupAllowFrom": [user_id],
-                    "groups": {
-                        group_id: {
-                            "requireMention": True,
-                            "allowFrom": [user_id]
-                        }
-                    },
+                    "groups": {group_id: {"requireMention": True, "allowFrom": [user_id]}},
                     "allowFrom": [user_id],
                     "streamMode": "partial"
                 }
@@ -260,20 +236,16 @@ config = {
     }
 }
 
-# 添加子 bots
 for bot in bots:
-    # agents.list
     config["agents"]["list"].append({
         "id": bot['id'],
         "workspace": f"$HOME/.openclaw/workspace-{bot['id']}",
         "agentDir": f"$HOME/.openclaw/agents/{bot['id']}/agent"
     })
-    # bindings
     config["bindings"].append({
         "agentId": bot['id'],
         "match": {"channel": "telegram", "accountId": bot['id']}
     })
-    # accounts
     config["channels"]["telegram"]["accounts"][bot['id']] = {
         "botToken": bot['token'],
         "enabled": True,
@@ -282,18 +254,12 @@ for bot in bots:
         "allowFrom": [user_id],
         "groupPolicy": "allowlist",
         "groupAllowFrom": [user_id],
-        "groups": {
-            group_id: {
-                "requireMention": True
-            }
-        },
+        "groups": {group_id: {"requireMention": True}},
         "streamMode": "partial"
     }
 
-# 写入文件
 with open('$OPENCLAW_CONFIG', 'w', encoding='utf-8') as f:
     json.dump(config, f, indent=2, ensure_ascii=False)
-
 print("JSON生成成功")
 PYEOF
 
@@ -345,24 +311,16 @@ interactive_mode() {
     generate_config "$main_token" "$user_id" "$group_id" "$bot_configs"
 }
 
-#============================================================================
-# 主函数
-#============================================================================
-
 generate_config() {
     local main_token="$1"
     local user_id="$2"
     local group_id="$3"
     local bot_configs="$4"
 
-    # 创建主工作区
     create_workspace_dirs "main"
-
-    # 生成主 Bot 文件
     generate_identity_md "main" "主助手" "@main_bot" "协调管理"
     generate_soul_md "main" "true" "" "@main_bot"
 
-    # 处理子 Bot
     local sub_bots_list=""
     if [ -n "$bot_configs" ]; then
         IFS=',' read -ra BOTArr <<< "$bot_configs"
@@ -385,7 +343,6 @@ generate_config() {
         done
     fi
 
-    # 生成 openclaw.json
     generate_openclaw_json "$main_token" "$user_id" "$group_id" "$bot_configs"
 
     success "配置完成!"
@@ -429,40 +386,23 @@ main() {
     local group_id=""
     local bot_configs=""
 
-    # 解析参数
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --help)
-                usage
-                ;;
-            --main-token)
-                main_token="$2"
-                shift 2
-                ;;
-            --user-id)
-                user_id="$2"
-                shift 2
-                ;;
-            --group-id)
-                group_id="$2"
-                shift 2
-                ;;
+            --help) usage ;;
+            --main-token) main_token="$2"; shift 2 ;;
+            --user-id) user_id="$2"; shift 2 ;;
+            --group-id) group_id="$2"; shift 2 ;;
             --bot)
                 if [ -z "$bot_configs" ]; then
                     bot_configs="$2"
                 else
                     bot_configs="$bot_configs,$2"
                 fi
-                shift 2
-                ;;
-            *)
-                error "未知参数: $1"
-                usage
-                ;;
+                shift 2 ;;
+            *) error "未知参数: $1"; usage ;;
         esac
     done
 
-    # 检查必要参数
     if [ -z "$main_token" ] || [ -z "$user_id" ] || [ -z "$group_id" ]; then
         if [ -t 0 ]; then
             interactive_mode
