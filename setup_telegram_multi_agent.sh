@@ -5,7 +5,7 @@
 
 set -e
 
-SCRIPT_VERSION="1.0.2"
+SCRIPT_VERSION="1.0.3"
 OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 BACKUP_CONFIG="$HOME/.openclaw/openclaw.json.backup-$(date +%Y%m%d_%H%M%S)"
 
@@ -111,11 +111,11 @@ generate_soul_md() {
         if [ -n "$sub_bots" ]; then
             for sb in $sub_bots; do
                 silent_rules="${silent_rules}
-- 当 ${sb} 被 @mention 时, 不要回复, 保持沉默"
+- 当 @$sb 被 @mention 时, 不要回复, 保持沉默"
             done
         fi
 
-        cat > "$workspace/SOUL.md" << EOF
+        cat > "$workspace/SOUL.md" << 'EOF'
 # SOUL.md - 我是谁与如何行为
 
 ## 身份
@@ -135,8 +135,14 @@ generate_soul_md() {
 2. 子 Bot 会收到消息并直接回复用户
 3. 不要自己回答，要让子 Bot 直接回复用户
 
+## 错误处理 (重要!)
+当使用 sessions_send 向子 Bot 发送任务时:
+- 如果超时不成功，不要自己回答
+- 告诉用户 "子 Bot 暂时不可用，请稍后再试"
+- 不要自行处理子 Bot 的专业领域任务
+
 ## 沉默规则 (重要!)
-当群里其他子 Bot 被 @mention 时:
+当群里有其他子 Bot 被 @mention 时:${silent_rules}
 - 不要试图回答该问题
 - 等待该子 Bot 响应
 - 除非被明确要求,不要介入子 Bot 的专业领域
@@ -146,13 +152,12 @@ EOF
 # SOUL.md - 我是谁与如何行为
 
 ## 身份
-我是 $username, 专业 $name 助手。
+我是 $username, 专业 $purpose 助手。
 
 ## 核心能力
-- $name 相关任务
+- $purpose 相关任务
 - 只在被 @mention 时响应群聊消息
 - 私聊随时响应
-- 被召唤时使用 message 工具直接回复用户
 
 ## 行为规则
 - 群聊: 仅在被 @mention 时响应
@@ -160,7 +165,7 @@ EOF
 - 完成的任务结果直接回复给用户
 
 ## 任务完成
-- 使用 message 工具在群里直接回复结果
+- 完成子任务后直接回复结果
 - 等待主 Bot 的下一步指令或继续执行
 EOF
     fi
@@ -222,7 +227,7 @@ if 'agents' not in config:
     config['agents'] = {}
 if 'list' not in config.get('agents', {}):
     config['agents']['list'] = []
-# 始终清理，只保留 main agent
+# 始终清理 telegram agents，只保留 main（修复：每次运行都清理）
 config['agents']['list'] = [a for a in config['agents']['list'] if a.get('id') == 'main']
 print("已清理旧的 telegram agents")
 
@@ -270,8 +275,8 @@ for bot in bots:
         'agentDir': os.path.expanduser(f"$HOME/.openclaw/agents/{bot['id']}/agent")
     })
 
-# 添加 bindings
-config['bindings'] = config.get('bindings', [])
+# 添加 bindings - 先清理旧的 telegram bindings（修复：每次运行都清理）
+config['bindings'] = [b for b in config.get('bindings', []) if b.get('match', {}).get('channel') != 'telegram']
 config['bindings'].append({'agentId': 'main', 'match': {'channel': 'telegram', 'accountId': 'default'}})
 for bot in bots:
     config['bindings'].append({'agentId': bot['id'], 'match': {'channel': 'telegram', 'accountId': bot['id']}})
@@ -388,7 +393,7 @@ generate_config() {
     local bot_configs="$4"
     local main_username="$5"
 
-    # 让 Python 先解析所有 bot 配置
+    # 让 Python 解析所有 bot 配置，Bash 只负责创建文件
     if [ -n "$bot_configs" ]; then
         python3 << PYEOF
 import json
@@ -415,38 +420,10 @@ for bot in """$bot_configs""".split(','):
 PYEOF
     fi > /tmp/bot_parse_output.txt
 
-    # 构建子Agent信息（用于主Agent的SOUL.md）
     local sub_bots_list=""
     local sub_bots_roster=""
     local created_workspaces=""
-    if [ -n "$bot_configs" ] && [ -s /tmp/bot_parse_output.txt ]; then
-        while IFS='|' read -r bot_id name username token; do
-            [ -z "$bot_id" ] && continue
-            # 子Agent列表（用于沉默规则）
-            if [ -n "$sub_bots_list" ]; then
-                sub_bots_list="$sub_bots_list $username"
-            else
-                sub_bots_list="$username"
-            fi
-            # 子Agent详细信息（名称+用户名）
-            local bot_entry="
-- **$name** (@${username#@})"
-            if [ -n "$sub_bots_roster" ]; then
-                sub_bots_roster="${sub_bots_roster}${bot_entry}"
-            else
-                sub_bots_roster="${bot_entry}"
-            fi
-            created_workspaces="$created_workspaces $bot_id"
-        done < /tmp/bot_parse_output.txt
-    fi
-
-    # 创建主Agent工作区（此时子Bot列表已构建完成）
-    create_workspace_dirs "main"
-    generate_identity_md "main" "主助手" "$main_username" "协调管理"
-    generate_soul_md "main" "true" "$sub_bots_list" "$main_username" "$sub_bots_roster"
-
-    # 创建子Agent工作区
-    if [ -n "$bot_configs" ] && [ -s /tmp/bot_parse_output.txt ]; then
+    if [ -n "$bot_configs" ]; then
         while IFS='|' read -r bot_id name username token; do
             [ -z "$bot_id" ] && continue
             local nickname="${name^}"
@@ -454,9 +431,24 @@ PYEOF
             create_workspace_dirs "$bot_id"
             generate_identity_md "$bot_id" "$nickname" "$username" "$name"
             generate_soul_md "$bot_id" "false" "" "$username"
+
+            if [ -n "$sub_bots_list" ]; then
+                sub_bots_list="$sub_bots_list "
+                sub_bots_roster="$sub_bots_roster\n- **$name** ($username)"
+            else
+                sub_bots_list="$username"
+                sub_bots_roster="- **$name** ($username)"
+            fi
+
+            created_workspaces="$created_workspaces $bot_id"
         done < /tmp/bot_parse_output.txt
         rm -f /tmp/bot_parse_output.txt
     fi
+
+    # 创建主Agent工作区（在获取sub_bots_list之后）
+    create_workspace_dirs "main"
+    generate_identity_md "main" "主助手" "$main_username" "协调管理"
+    generate_soul_md "main" "true" "$sub_bots_list" "$main_username" "$sub_bots_roster"
 
     generate_openclaw_json "$main_token" "$user_id" "$group_id" "$bot_configs"
 
