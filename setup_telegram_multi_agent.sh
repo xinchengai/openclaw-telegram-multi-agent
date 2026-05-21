@@ -32,17 +32,17 @@ usage() {
 用法: $0 [选项]
 
 选项:
-    --main-token TOKEN      主 Bot Token (必需)
-    --user-id ID            你的 Telegram User ID (必需)
-    --group-id ID           群组 ID (必需, 如 -1001234567890)
-    --bot NAME:TOKEN        子 Bot 配置 (格式: 名称:Token)
-                            可以多次使用来添加多个 Bot
-    --help                  显示此帮助信息
+    --main NAME:TOKEN:@USERNAME  主 Bot 配置 (格式: 名称:Token:@Username)
+    --user-id ID                 你的 Telegram User ID (必需)
+    --group-id ID                群组 ID (必需, 如 -1001234567890)
+    --bot NAME:TOKEN:@USERNAME   子 Bot 配置 (格式: 名称:Token:@Username)
+                                 可以多次使用来添加多个 Bot
+    --help                      显示此帮助信息
 
 示例:
     # 配置 2 个子 Bot (coder 和 writer)
-    $0 --main-token "xxx" --user-id "123456" --group-id "-1001234567890" \\
-       --bot "coder:yyy" --bot "writer:zzz"
+    $0 --main "main:xxx:@my_main_bot" --user-id "123456" --group-id "-1001234567890" \
+       --bot "coder:yyy:@coder_bot" --bot "writer:zzz:@writer_bot"
 
     # 交互式模式 (不带参数运行)
     $0
@@ -111,7 +111,7 @@ generate_soul_md() {
         if [ -n "$sub_bots" ]; then
             for sb in $sub_bots; do
                 silent_rules="${silent_rules}
-- 当 @$sb 被 @mention 时, 不要回复, 保持沉默"
+- 当 $username 被 @mention 时, 不要回复, 保持沉默"
             done
         fi
 
@@ -132,14 +132,15 @@ generate_soul_md() {
 ## 任务分配流程 (重要!)
 当用户要我安排子 Bot 完成任务时:
 1. 使用 sessions_send 工具发送任务给对应的子 Bot
-2. 子 Bot 会收到消息并直接回复用户
-3. 不要自己回答，要让子 Bot 直接回复用户
+2. **发送时，任务内容末尾必须加一句：「结果直接发群里，不要回复给主bot」**
+3. 任务发送后，直接回复用户「任务已安排给 @XXX」即可结束
+4. **不要等待 sessions_send 的返回结果，不要处理超时状态提示**
+5. 子 Bot 会收到消息并直接回复群聊
 
-## 错误处理 (重要!)
-当使用 sessions_send 向子 Bot 发送任务时:
-- 如果超时不成功，不要自己回答
-- 告诉用户 "子 Bot 暂时不可用，请稍后再试"
-- 不要自行处理子 Bot 的专业领域任务
+## 重要原则
+- 任务一旦安排给子 Bot，立即结束，不要介入
+- 完全忽略 sessions_send 的超时或错误返回
+- 让子 Bot 直接在群里回复用户
 
 ## 沉默规则 (重要!)
 当群里有其他子 Bot 被 @mention 时:${silent_rules}
@@ -158,14 +159,20 @@ EOF
 - $purpose 相关任务
 - 只在被 @mention 时响应群聊消息
 - 私聊随时响应
+- 通过 sessions_send 收到主 Bot 分配的任务
 
 ## 行为规则
 - 群聊: 仅在被 @mention 时响应
 - 私聊: 随时响应
-- 完成的任务结果直接回复给用户
+
+## 任务执行 (重要!)
+通过 sessions_send 收到任务时:
+1. 执行任务
+2. 把结果直接发到群里（不是发给主bot）
+3. 发完后任务结束，不要等待进一步指令
 
 ## 任务完成
-- 完成子任务后直接回复结果
+- 完成子任务后直接回复结果到群里
 - 等待主 Bot 的下一步指令或继续执行
 EOF
     fi
@@ -345,7 +352,7 @@ interactive_mode() {
     echo "============================================"
     echo ""
 
-    read -p "主 Bot Token (from @BotFather): " main_token
+    read -p "主 Bot 配置 (名称:Token:@Username): " main_config
     read -p "你的 Telegram User ID (from @userinfobot): " user_id
     read -p "群组 ID (如 -1001234567890): " group_id
 
@@ -356,7 +363,6 @@ interactive_mode() {
     echo "输入空行结束子 Bot 配置"
     echo ""
 
-    read -p "主 Bot @Username (如 @xxx_bot): " main_username
     local bot_configs=""
     while true; do
         read -p "子 Bot (名称:Token:Username): " input
@@ -375,15 +381,26 @@ interactive_mode() {
         warn "未添加子 Bot，将只创建主 Bot 配置"
     fi
 
+    # 解析 main 配置
+    local main_name="" main_token="" main_username=""
+    if [ -n "$main_config" ]; then
+        idx="${main_config%%:*}"
+        rest="${main_config#*:}"
+        main_name="$idx"
+        last_colon="${rest##*:}"
+        token_part="${rest%:*}"
+        main_token="$token_part"
+        main_username="$last_colon"
+    fi
+
     echo ""
     info "收集到的配置:"
-    echo "  主 Bot Token: ${main_token:0:20}..."
-    echo "  主 Bot @Username: $main_username"
+    echo "  主 Bot 配置: ${main_config}"
     echo "  User ID: $user_id"
     echo "  群组 ID: $group_id"
     echo "  子 Bots: $bot_configs"
 
-    generate_config "$main_token" "$user_id" "$group_id" "$bot_configs" "$main_username"
+    generate_config "$main_token" "$user_id" "$group_id" "$bot_configs" "$main_username" "$main_name"
 }
 
 generate_config() {
@@ -392,6 +409,7 @@ generate_config() {
     local group_id="$3"
     local bot_configs="$4"
     local main_username="$5"
+    local main_name="$6"
 
     # 让 Python 解析所有 bot 配置，Bash 只负责创建文件
     if [ -n "$bot_configs" ]; then
@@ -434,7 +452,8 @@ PYEOF
 
             if [ -n "$sub_bots_list" ]; then
                 sub_bots_list="$sub_bots_list "
-                sub_bots_roster="$sub_bots_roster\n- **$name** ($username)"
+                sub_bots_roster="$sub_bots_roster
+- **$name** ($username)"
             else
                 sub_bots_list="$username"
                 sub_bots_roster="- **$name** ($username)"
@@ -482,16 +501,15 @@ PYEOF
 }
 
 main() {
-    local main_token=""
+    local main_config=""
     local user_id=""
     local group_id=""
     local bot_configs=""
-    local main_username=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             --help) usage ;;
-            --main-token) main_token="$2"; shift 2 ;;
+            --main) main_config="$2"; shift 2 ;;
             --user-id) user_id="$2"; shift 2 ;;
             --group-id) group_id="$2"; shift 2 ;;
             --bot)
@@ -501,16 +519,29 @@ main() {
                     bot_configs="$bot_configs,$2"
                 fi
                 shift 2 ;;
-            --main-username) main_username="$2"; shift 2 ;;
             *) error "未知参数: $1"; usage ;;
         esac
     done
 
-    if [ -z "$main_token" ] || [ -z "$user_id" ] || [ -z "$group_id" ] || [ -z "$main_username" ]; then
+    # 解析 main 配置: NAME:TOKEN:@USERNAME
+    local main_name="" main_token="" main_username=""
+    if [ -n "$main_config" ]; then
+        # 用第一个冒号分割 name 和 rest
+        idx="${main_config%%:*}"
+        rest="${main_config#*:}"
+        main_name="$idx"
+        # 用最后一个冒号分割 token 和 username
+        last_colon="${rest##*:}"
+        token_part="${rest%:*}"
+        main_token="$token_part"
+        main_username="$last_colon"
+    fi
+
+    if [ -z "$main_config" ] || [ -z "$user_id" ] || [ -z "$group_id" ]; then
         if [ -t 0 ]; then
             interactive_mode
         else
-            error "缺少必需参数: --main-token, --user-id, --group-id, --main-username"
+            error "缺少必需参数: --main, --user-id, --group-id"
             echo ""
             usage
         fi
@@ -519,7 +550,7 @@ main() {
 
     check_openclaw
     backup_config
-    generate_config "$main_token" "$user_id" "$group_id" "$bot_configs" "$main_username"
+    generate_config "$main_token" "$user_id" "$group_id" "$bot_configs" "$main_username" "$main_name"
 }
 
 main "$@"
